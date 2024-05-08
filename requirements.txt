@@ -1,0 +1,18 @@
+langchain==0.0.349
+omegaconf
+PyPDF2
+pypdf
+tiktoken
+openai==0.28.1
+boto3==1.16.0
+docutils==0.15.2
+elasticsearch
+elasticsearch-dsl
+pandas
+unstructured==0.10.14
+unstructured[pdf]
+s3transfer==0.3.3
+openpyxl
+requests
+python-pptx==0.6.23
+xlrd == 2.0.1
