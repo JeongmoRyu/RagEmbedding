@@ -62,11 +62,23 @@ class Transformer:
             chunk_size=cfg.embedding.chunk_size, chunk_overlap=cfg.embedding.chunk_overlap
         )
         self.encoder = tiktoken.get_encoding("cl100k_base")
+        self.max_retries = 10
         
         print(f"Using OpenAI API key: {cfg.embedding['openai_api_key']}")
         print(f"Using OpenAI API base URL: {cfg.embedding['openai_base_url']}")
         print(f"Using OpenAI API version: {cfg.embedding['openai_api_version']}")
         print(f"Using deployment name: {cfg.embedding['deployment']}")
+
+    def embed_query(self, query):
+        for i in range(self.max_retries):
+            try:
+                response = self.embedding.embed_query(query)
+                return response
+            except Exception as e:
+                wait_time = 4 ** i
+                print(f"ERROR {e} : retrying after {wait_time} (exponential backoff)")
+                time.sleep(wait_time)
+        raise Exception("Request failed after {} retries".format(max_retries))
 
 
     ### WILL BE DEPRECATED

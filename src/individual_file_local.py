@@ -12,6 +12,7 @@ import pandas as pd
 # from langchain.document_loaders import S3FileLoader
 from pathlib import Path
 from langchain.schema import Document
+# import sys
 
 
 # def read_excel_file(file_path):
@@ -28,6 +29,7 @@ from langchain.schema import Document
 #         logging.error(f"Error reading {file_path}: {e}")
 #         return None
 
+
 def read_text_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         return f.read()
@@ -35,9 +37,16 @@ def read_text_file(file_path):
 def preprocessing(text: str):
     return text.replace("~", "-").replace("\n", "")
 
-def main():
-    ### set logger
-    logging.basicConfig(level=logging.INFO)
+def IndividualFileLocal(folder_name):
+    # if len(sys.argv) > 1:
+    #   folder_name = sys.argv[1]
+    #   print(f"Received folder name: {folder_name}")
+    # else:
+    #   print("No folder name provided.")
+    # ### set logger
+    # logging.basicConfig(level=logging.INFO)
+
+    
     # # env = os.getenv("ENV", "local")
     # cfg_path = f"/workplace/cfg/local_cfg.yaml"
     # cfg = OmegaConf.load(cfg_path)
@@ -46,9 +55,9 @@ def main():
 
     # # 상위 디렉토리로 이동하여 'cfg' 디렉토리 경로 생성
     # cfg_path = current_dir.parent / 'cfg' / 'local_cfg.yaml'
-
     ### Load config file
     cfg = OmegaConf.load(str(r'../cfg/local_cfg.yaml'))
+    # cfg = OmegaConf.load(str(r'C:\\Users\\maum.ai\\Desktop\\AP\\AIBC(mcl)-mStudio\\amore-agent-rag\\cfg\\local_cfg.yaml'))
     print(f"Type of cfg: {type(cfg)}")  # 추가: cfg의 타입 확인
     print(f"Type of cfg.local: {type(cfg.local)}")  # 추가: cfg.local의 타입 확인
     print(f"Local path: {cfg.local.path}")  # 추가: local path 확인
@@ -63,7 +72,8 @@ def main():
     transformer = Transformer(cfg)
     loader = Loader(cfg)
 
-    local_path = cfg.local.path
+    local_path = f"{cfg.local.path}/{folder_name}"
+    print(local_path)
     local_prefix = cfg.local.prefix
 
     files = extractor.get_file_list_from_local(
@@ -88,7 +98,7 @@ def main():
 
         print(f"Extracted group name: {group}")
 
-        file_name = os.path.join(local_path, split_path[-1])
+        file_name = os.path.join(local_path, *split_path[-2:])
         extractor.download_file(extractor.local_path, excel_file, file_name)
 
         if not os.path.exists(file_name) or not file_name.endswith(('.xls', '.xlsx')):
@@ -202,4 +212,4 @@ def main():
         loader.load_bulk(docs=pdf_docs)
 
 if __name__ == "__main__":
-    main()
+    IndividualFileLocal()

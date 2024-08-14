@@ -1,4 +1,5 @@
 import logging
+import time
 from omegaconf import OmegaConf
 from typing import List
 from elasticsearch import Elasticsearch, helpers
