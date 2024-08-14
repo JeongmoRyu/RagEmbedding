@@ -176,8 +176,12 @@ def generate_embedding_api():
         return jsonify({"error": "No folder_name provided"}), 400
 
     try:
-        embedding = IndividualFileLocal(folder_name)
-        return jsonify({"embedding": embedding.tolist()}) 
+        results = IndividualFileLocal(folder_name)
+        if results["errors"]:
+            return jsonify({"status": "completed with errors", "results": results}), 400
+
+        return jsonify({"status": "success", "results": results})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
