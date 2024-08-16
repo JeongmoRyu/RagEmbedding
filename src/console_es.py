@@ -13,7 +13,10 @@ from individual_file_local import IndividualFileLocal
 app = Flask(__name__)
 
 # 설정 파일 로드
-cfg = OmegaConf.load(str(r'../cfg/local_cfg.yaml'))
+cfg = OmegaConf.load(str(r'/workplace/cfg/local_cfg.yaml'))
+
+# cfg = OmegaConf.load(str(r'/workplace/cfg/local_cfg.yaml'))
+# docker로 console_es.py를 flask에 띄웠을 시 
 
 # Elasticsearch 설정 가져오기
 es_url = cfg.es.url
@@ -43,7 +46,7 @@ def get_all_files():
     response = requests.get(f"{es_url}/{index_name}/_search", headers={"Content-Type": "application/json"}, data=json.dumps(query), auth=auth)
     return jsonify(response.json())
 
-# 2. Sub 폴더 리스트 조회
+# 2. Sub 폴더 리스트 조회 10000개
 @app.route('/get_sub_folders', methods=['GET'])
 def get_sub_folders():
     query = {
@@ -60,17 +63,25 @@ def get_sub_folders():
     response = requests.get(f"{es_url}/{index_name}/_search", headers={"Content-Type": "application/json"}, data=json.dumps(query), auth=auth)
     return jsonify(response.json())
 
-# 3. 특정 폴더 내의 파일 리스트 조회 body : folder_name
+# 3. 특정 폴더 내의 파일 리스트 조회 body : folder_name 10000개
 @app.route('/get_files_in_folder', methods=['GET'])
 def get_files_in_folder():
     folder_name = request.json.get('folder_name')
     query = {
+        "size": 0,  
         "query": {
             "term": {
                 "metadata.group.keyword": folder_name
             }
         },
-        "_source": ["metadata.source", "metadata.group"]
+        "aggs": {
+            "distinct_files": {
+                "terms": {
+                    "field": "metadata.source.keyword",
+                    "size": 10000 
+                }
+            }
+        }
     }
     response = requests.get(f"{es_url}/{index_name}/_search", headers={"Content-Type": "application/json"}, data=json.dumps(query), auth=auth)
     return jsonify(response.json())
@@ -135,7 +146,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-# 7. 특정 folder_name에 파일들을 저장하는 API
+# 7. 특정 folder_name에 파일들을 저장하는 API form-data body : folder_name(key), files(key)
 @app.route('/upload_files', methods=['POST'])
 def upload_files():
     if 'folder_name' not in request.form:
@@ -167,7 +178,7 @@ def upload_files():
 
 
 
-# 8. 특정 folder_name에 파일들을 embedding하는 API
+# 8. 특정 folder_name에 파일들을 embedding하는 API body : folder_name
 @app.route('/generate_embedding', methods=['POST'])
 def generate_embedding_api():
     data = request.json

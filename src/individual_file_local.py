@@ -57,6 +57,10 @@ def IndividualFileLocal(folder_name):
     # cfg_path = current_dir.parent / 'cfg' / 'local_cfg.yaml'
     ### Load config file
     cfg = OmegaConf.load(str(r'../cfg/local_cfg.yaml'))
+    # cfg = OmegaConf.load(str(r'/workplace/cfg/local_cfg.yaml'))
+    # docker로 console_es.py를 flask에 띄웠을 시 
+
+    # 개인 컴퓨터에서 embedding 시 위치 지정
     # cfg = OmegaConf.load(str(r'C:\\Users\\maum.ai\\Desktop\\AP\\AIBC(mcl)-mStudio\\amore-agent-rag\\cfg\\local_cfg.yaml'))
     print(f"Type of cfg: {type(cfg)}")  # 추가: cfg의 타입 확인
     print(f"Type of cfg.local: {type(cfg.local)}")  # 추가: cfg.local의 타입 확인

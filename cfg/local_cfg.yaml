@@ -13,6 +13,7 @@ embedding:
 
 es:
   url: https://url
+  #   url: "http://elasticsearch:9200" 내부 docker로 console_es.py를 flask에 띄웠을 시 localhost가 아닌 container로 연결
   key: ****
   index_name: aabc-mcl-wiki
   user: **
