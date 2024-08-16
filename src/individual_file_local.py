@@ -3,7 +3,7 @@ import time
 import os
 from pathlib import Path
 import uuid
-from langchain.document_loaders import S3FileLoader, TextLoader
+from langchain.document_loaders import S3FileLoader, TextLoader, PyPDFLoader
 from omegaconf import OmegaConf
 from extractor import Extractor
 from transformer import Transformer
@@ -172,7 +172,7 @@ def IndividualFileLocal(folder_name):
         for pdf_file in pdf_file_list:
             try:
                 logging.info(f"embedding {pdf_file}")
-                pdf_loader = TextLoader(pdf_file)
+                pdf_loader = PyPDFLoader(pdf_file)
                 pdf_docs = pdf_loader.load_and_split(text_splitter=transformer.text_splitter)
                 for doc in pdf_docs:
                     doc.page_content = preprocessing(doc.page_content)
