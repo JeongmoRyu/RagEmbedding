@@ -18,33 +18,51 @@ class Loader:
         )
         logging.basicConfig(level=logging.INFO)
 
-    def inplace_docs(self, source, inplace=True):
-        doc_name: str = source
+    def inplace_docs(self, source, folder_name, inplace=True):
+        reserved_characters = ["+", "-", "=", "&&", "||", ">", "<", "!", "(", ")", "{", "}", "[", "]", "^", "\"", "~", "*", "?", ":", "\\", "/"]
+        doc_name = source
         if inplace:
-            reserved_character = ["+", "-", "=", "&&", "||", ">", "<", "!", "(", ")", "{", "}", "[", "]", "^", "\"", "~", "*", "?", ":", "\\", "/"]
-            logging.info(f"replacing {doc_name}")
-            for chr in reserved_character:
+            logging.info(f"Deleting documents with source: {doc_name} in folder: {folder_name}")
+            for chr in reserved_characters:
                 doc_name = doc_name.replace(f"{chr}", f"\\{chr}")
             self.es.delete_by_query(
                 index=self.cfg.es.index_name,
-                body={'query': {'term': {'metadata.source.keyword': doc_name}}}
+                # body={'query': {'term': {'metadata.source.keyword': doc_name}}}
+                body = {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"metadata.group.keyword": folder_name}},
+                                {"term": {"metadata.source.keyword": doc_name}}
+                            ]
+                        }
+                    }
+                }
             )
         else:
-            reserved_character = ["+", "-", "=", "&&", "||", ">", "<", "!", "(", ")", "{", "}", "[", "]", "^", "\"", "~", "*", "?", ":", "\\", "/"]
-            logging.info(f"replacing {doc_name}")
-            for chr in reserved_character:
+            logging.info(f"Checking existence of documents with source: {doc_name} in folder: {folder_name}")
+            for chr in reserved_characters:
                 doc_name = doc_name.replace(f"{chr}", f"\\{chr}")
             res = self.es.count(
                 index=self.cfg.es.index_name,
-                body={'query': {'term': {'metadata.source.keyword': doc_name}}}
+                body={
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"metadata.group.keyword": folder_name}},
+                                {"term": {"metadata.source.keyword": doc_name}}
+                            ]
+                        }
+                    }
+                }
+                # body={'query': {'term': {'metadata.source.keyword': doc_name}}}
             )["count"]
 
             if res == 0:
-                logging.info(f"{doc_name} already exists")
+                logging.info(f"Documents with source: {doc_name} already exist.")
                 return None
             else:
-                logging.info(f"{doc_name} doesn't exist. embedding...")
-                pass
+                logging.info(f"Documents with source: {doc_name} in folder: {folder_name} do not exist. Proceeding to embedding...")
         return None
 
     def load_bulk(self, docs: List[Document]):
@@ -76,3 +94,19 @@ class Loader:
         self.es.indices.refresh(index=self.cfg.es.index_name)
 
         return None
+    
+
+
+    def delete_data_in_group(self, group_name: str):
+        logging.info(f"Deleting documents with group: {group_name}")
+        self.es.delete_by_query(
+                    index=self.cfg.es.index_name,
+                    body={
+                        "query": {
+                            "term": {
+                                "metadata.group.keyword": group_name
+                            }
+                        }
+                    }
+                )
+        logging.info(f"Documents with group: {group_name} deleted.")

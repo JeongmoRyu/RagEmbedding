@@ -31,7 +31,7 @@ class Extractor:
         self.prefix = cfg.local.prefix
         # self.cfg = OmegaConf.load(cfg)["local"]
         logging.basicConfig(level=logging.INFO)
-
+            
     def get_file_list_from_local(
             self,
             local_path,
@@ -48,15 +48,44 @@ class Extractor:
         Returns:
             Dict: file lists of extensions
         """
-        logging.info(f"Accessing local directory: `{local_path}` and prefix : `{prefix}")
+        logging.info(f"Accessing local directory: `{local_path}` and prefix : `{prefix}`")
         output = {ext: [] for ext in file_extensions}
-        
-        for root, dirs, files in os.walk(local_path):
+        # Convert to absolute path
+        absolute_path = os.path.abspath(local_path)
+        logging.info(f"Absolute path: `{absolute_path}`")
+
+        # Check if the directory exists
+        if not os.path.isdir(absolute_path):
+            logging.error(f"Directory does not exist: {absolute_path}")
+            return output
+
+        # Check read permissions
+        if os.access(absolute_path, os.R_OK):
+            logging.info(f"Read permission is available for `{absolute_path}`")
+        else:
+            logging.error(f"Read permission is not available for `{absolute_path}`")
+
+        # List directory contents
+        try:
+            contents = os.listdir(absolute_path)
+            logging.info(f"Contents of `{absolute_path}`: {contents}")
+        except Exception as e:
+            logging.error(f"Error listing directory contents: {e}")
+            return output
+
+        # Walk through the directory
+        for root, dirs, files in os.walk(absolute_path):
+            logging.info(f"Checking directory: {root}")
+
             for file in files:
+                logging.info(f"Found file: {file}")
+                if prefix and not file.startswith(prefix):
+                    continue
                 for ext in file_extensions:
-                    if file.endswith(ext):
+                    if file.lower().endswith(ext.lower()): 
                         output[ext].append(os.path.join(root, file))
-        
+
+        logging.info(f"Files found: {output}")
         return output
 
     def download_file(self, local_path, local_file, destination_path) -> None:
@@ -75,5 +104,6 @@ class Extractor:
                 dst.write(src.read())
         except BaseException as e:
             print(traceback.format_exc())
+            logging.error(f"Failed to copy file: {e}")
             raise e
         return None

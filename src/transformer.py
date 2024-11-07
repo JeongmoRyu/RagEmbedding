@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import uuid
 from typing import Dict, List, Optional
 
@@ -21,53 +22,54 @@ class Transformer:
 
     def __init__(self, cfg):
     
-        # self.cfg = OmegaConf.load(cfg)["embedding"]
-        # self.embedding. = cfg.path
-        # self.embedding = cfg.prefix
-        # os.environ["OPENAI_API_KEY"] = cfg.openai_api_key
-        # os.environ["OPENAI_API_VERSION"] = cfg.openai_api_version
-        # self.embedding = OpenAIEmbeddings(
-        #     deployment=cfg.deployment,
-        #     model= cfg.deployment,
-        #     openai_api_base= cfg.openai_base_url,
+        # AzureOpenAI 임베딩 방식
+
+        # base_url_with_version = f"{cfg.embedding.openai_base_url}/openai/deployments/{cfg.embedding.deployment}/embeddings?api-version={cfg.embedding.openai_api_version}"
+
+        # self.embedding = AzureOpenAIEmbeddings(
+        #     deployment=cfg.embedding.deployment,
+        #     model=cfg.embedding.deployment,
+        #     openai_api_base=cfg.embedding.openai_base_url, 
         #     openai_api_type="azure",
-        #     openai_api_key= cfg.openai_api_key,
-        #     openai_api_version= cfg.openai_api_version,
+        #     openai_api_key=cfg.embedding.openai_api_key,
+        #     openai_api_version=cfg.embedding.openai_api_version, 
         #     request_timeout=60,
         #     max_retries=1000,
         #     retry_min_seconds=30,
         #     retry_max_seconds=60,
         # )
+        # self.embedding.client._base_url = base_url_with_version  
         # self.text_splitter = TokenTextSplitter(
-        #     chunk_size= cfg.chunk_size, chunk_overlap= cfg.chunk_overlap
+        #     chunk_size=cfg.embedding.chunk_size, chunk_overlap=cfg.embedding.chunk_overlap
         # )
         # self.encoder = tiktoken.get_encoding("cl100k_base")
+        # self.max_retries = 10
 
-        base_url_with_version = f"{cfg.embedding.openai_base_url}/openai/deployments/{cfg.embedding.deployment}/embeddings?api-version={cfg.embedding.openai_api_version}"
 
-        self.embedding = AzureOpenAIEmbeddings(
-            deployment=cfg.embedding.deployment,
+        # OpenAI 임베딩 방식
+
+        os.environ["OPENAI_API_KEY"] = cfg.embedding.openai_api_key
+
+        self.embedding = OpenAIEmbeddings(
             model=cfg.embedding.deployment,
-            openai_api_base=cfg.embedding.openai_base_url, 
-            openai_api_type="azure",
             openai_api_key=cfg.embedding.openai_api_key,
-            openai_api_version=cfg.embedding.openai_api_version, 
             request_timeout=60,
             max_retries=1000,
             retry_min_seconds=30,
             retry_max_seconds=60,
         )
-        self.embedding.client._base_url = base_url_with_version  
+
         self.text_splitter = TokenTextSplitter(
             chunk_size=cfg.embedding.chunk_size, chunk_overlap=cfg.embedding.chunk_overlap
         )
         self.encoder = tiktoken.get_encoding("cl100k_base")
         self.max_retries = 10
-        
-        print(f"Using OpenAI API key: {cfg.embedding['openai_api_key']}")
-        print(f"Using OpenAI API base URL: {cfg.embedding['openai_base_url']}")
-        print(f"Using OpenAI API version: {cfg.embedding['openai_api_version']}")
-        print(f"Using deployment name: {cfg.embedding['deployment']}")
+
+
+        logging.info(f"Using OpenAI API key: {cfg.embedding['openai_api_key']}")
+        # logging.info(f"Using OpenAI API base URL: {cfg.embedding['openai_base_url']}")
+        # logging.info(f"Using OpenAI API version: {cfg.embedding['openai_api_version']}")
+        logging.info(f"Using deployment name: {cfg.embedding['deployment']}")
 
     def embed_query(self, query):
         for i in range(self.max_retries):
@@ -76,9 +78,9 @@ class Transformer:
                 return response
             except Exception as e:
                 wait_time = 4 ** i
-                print(f"ERROR {e} : retrying after {wait_time} (exponential backoff)")
+                logging.error(f"ERROR {e} : retrying after {wait_time} seconds (exponential backoff)")
                 time.sleep(wait_time)
-        raise Exception("Request failed after {} retries".format(max_retries))
+        raise Exception("Request failed after {} retries".format(self.max_retries))
 
 
     ### WILL BE DEPRECATED
@@ -157,19 +159,11 @@ class Transformer:
             bool
         """
         if embedding_column:
-            if df[json_columns].isna().all() or df[embedding_column].isna().any():
-                return False
-            else:
-                return True
+            return not df[json_columns].isna().all() and not df[embedding_column].isna().any()
         else:
-            if df[json_columns].isna().all():
-                return False
-            else:
-                return True
+            return not df[json_columns].isna().all()
 
-    def get_text_file_in_chunk(
-        self, text_file, text_splitter
-    ):
+    def get_text_file_in_chunk(self, text_file, text_splitter):
         loader = TextLoader(text_file)
         text_file = loader.load_and_split(text_splitter=text_splitter)
         for doc in text_file:
@@ -209,72 +203,43 @@ class Transformer:
             embedding = self.embedding
 
         docs = []
-        for i in range(0, df.shape[0]):
+        for i in range(df.shape[0]):
             row = df.iloc[i, :]
 
-            if not self._validate_data(
-                df=row,
-                json_columns=json_columns,
-                embedding_column=embedding_column
-            ):
+            if not self._validate_data(df=row, json_columns=json_columns, embedding_column=embedding_column):
                 continue
 
-            metadata = self._delete_empty_string_from_dict(
-                row[metadata_columns].dropna().to_dict()
-            )
+            metadata = self._delete_empty_string_from_dict(row[metadata_columns].dropna().to_dict())
             metadata["uuid"] = uuid.uuid4().hex
             metadata["source"] = source
-            contents = self._delete_empty_string_from_dict(
-                row[json_columns].dropna().to_dict()
-            )
+            contents = self._delete_empty_string_from_dict(row[json_columns].dropna().to_dict())
 
             if text_splitter:
                 json_contents = self._split_from_dict(contents, text_splitter)
 
                 if stem_columns:
-                    stem_contents = self._delete_empty_string_from_dict(
-                        row[stem_columns].dropna().to_dict()
-                    )
-                    json_contents = [
-                        dict(stem_contents, **json_content)
-                        for json_content in json_contents
-                    ]
-
+                    stem_contents = self._delete_empty_string_from_dict(row[stem_columns].dropna().to_dict())
+                    json_contents = [dict(stem_contents, **json_content) for json_content in json_contents]
             else:
                 json_contents = [contents]
                 if stem_columns:
-                    stem_contents = self._delete_empty_string_from_dict(
-                        row[stem_columns].dropna().to_dict()
-                    )
-                    json_contents = [
-                        dict(stem_contents, **json_content)
-                        for json_content in json_contents
-                    ]
+                    stem_contents = self._delete_empty_string_from_dict(row[stem_columns].dropna().to_dict())
+                    json_contents = [dict(stem_contents, **json_content) for json_content in json_contents]
 
             for n, json_content in enumerate(json_contents):
                 _metadata = metadata.copy()
                 _metadata["index"] = n
-                text = (
-                    str({f"```{k}```": v for k, v in json_content.items()})
-                    .replace("'", "")
-                    .replace("{", "")
-                    .replace("}", "")
-                )
+                text = str({f"```{k}```": v for k, v in json_content.items()}).replace("'", "").replace("{", "").replace("}", "")
                 if not embedding_column:
                     vector = embedding.embed_query(str(json_content))
                 else:
                     try:
-                        vector = embedding.embed_query(
-                            str(row[embedding_column].to_dict())
-                        )
+                        vector = embedding.embed_query(str(row[embedding_column].to_dict()))
                     except Exception:
                         logging.info(f"row doesn't have {embedding_column}")
                         continue
                 _metadata["vector"] = vector
-                doc = Document(
-                    page_content=text,
-                    metadata=_metadata,
-                )
+                doc = Document(page_content=text, metadata=_metadata)
                 docs.append(doc)
 
         return docs
