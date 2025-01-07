@@ -1,0 +1,42 @@
+embedding:
+  openai_api_key:  "*******"
+  deployment: "text-embedding-ada-002"
+
+  chunk_size: 1500
+  chunk_overlap: 200
+  max_token: 4096
+  vendor: "OPENAI"
+  seq: 0
+
+es:
+  url: https://url
+  #   url: "http://elasticsearch:9200" 내부 docker로 console_es.py를 flask에 띄웠을 시 localhost가 아닌 container로 연결
+  key: ****
+  index_name: aabc-mcl-wiki
+  user: **
+  pw: ******
+
+
+
+database:
+  host: "dbhost"
+  port: 5432
+  user: "dbuser"
+  pw: "dbpassword"
+  db_name: "dbname"
+  db_schema: "dbschema"
+
+s3:
+  bucket: ***
+  prefix: **/
+
+
+local:
+  path: "/data/files/pathname/s3"
+  prefix: ""
+
+
+embeddingserver:
+  host: "http://url:port"
+  # host: "embeddingproxyserver"
+

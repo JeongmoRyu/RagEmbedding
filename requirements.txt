@@ -18,3 +18,4 @@ python-pptx==0.6.23
 xlrd == 2.0.1
 Flask
 psycopg2-binary
+transformers

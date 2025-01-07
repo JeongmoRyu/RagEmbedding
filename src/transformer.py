@@ -1,18 +1,14 @@
 import logging
 import os
-import time
 import uuid
 from typing import Dict, List, Optional
-
+from transformers import AutoTokenizer
 import pandas as pd
 import tiktoken
 from langchain.document_loaders import TextLoader
 from langchain.docstore.document import Document
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.embeddings import AzureOpenAIEmbeddings
-from langchain.text_splitter import TokenTextSplitter
-from omegaconf import OmegaConf
 
+from langchain.text_splitter import TokenTextSplitter
 
 class Transformer:
     """
@@ -20,69 +16,53 @@ class Transformer:
     Using Langchain Document format
     """
 
-    def __init__(self, cfg):
-    
-        # AzureOpenAI 임베딩 방식
-
-        # base_url_with_version = f"{cfg.embedding.openai_base_url}/openai/deployments/{cfg.embedding.deployment}/embeddings?api-version={cfg.embedding.openai_api_version}"
-
-        # self.embedding = AzureOpenAIEmbeddings(
-        #     deployment=cfg.embedding.deployment,
-        #     model=cfg.embedding.deployment,
-        #     openai_api_base=cfg.embedding.openai_base_url, 
-        #     openai_api_type="azure",
-        #     openai_api_key=cfg.embedding.openai_api_key,
-        #     openai_api_version=cfg.embedding.openai_api_version, 
-        #     request_timeout=60,
-        #     max_retries=1000,
-        #     retry_min_seconds=30,
-        #     retry_max_seconds=60,
-        # )
-        # self.embedding.client._base_url = base_url_with_version  
-        # self.text_splitter = TokenTextSplitter(
-        #     chunk_size=cfg.embedding.chunk_size, chunk_overlap=cfg.embedding.chunk_overlap
-        # )
-        # self.encoder = tiktoken.get_encoding("cl100k_base")
-        # self.max_retries = 10
-
-
+    def __init__(self, cfg, embedding, model, vendor):
         # OpenAI 임베딩 방식
 
-        os.environ["OPENAI_API_KEY"] = cfg.embedding.openai_api_key
-
-        self.embedding = OpenAIEmbeddings(
-            model=cfg.embedding.deployment,
-            openai_api_key=cfg.embedding.openai_api_key,
-            request_timeout=60,
-            max_retries=1000,
-            retry_min_seconds=30,
-            retry_max_seconds=60,
-        )
-
-        self.text_splitter = TokenTextSplitter(
-            chunk_size=cfg.embedding.chunk_size, chunk_overlap=cfg.embedding.chunk_overlap
-        )
+        # os.environ["OPENAI_API_KEY"] = cfg.embedding.openai_api_key
+        # self.cfg = cfg
+        # self.text_splitter = TokenTextSplitter(
+        #     chunk_size=cfg.embedding.chunk_size,
+        #     chunk_overlap=cfg.embedding.chunk_overlap
+        # )
+        # self.encoder = tiktoken.get_encoding("cl100k_base")
+        # self.embedding = embedding
+        self.cfg = cfg
+        self.embedding = embedding
+        self.model = model
+        
+        if vendor != "OPENAI":
+            self.tokenizer = AutoTokenizer.from_pretrained(model)
+            max_length = self.tokenizer.model_max_length
+            self.text_splitter = TokenTextSplitter(
+                chunk_size=min(max_length, cfg.embedding.chunk_size),
+                chunk_overlap=cfg.embedding.chunk_overlap
+            )
+        else:
+            os.environ["OPENAI_API_KEY"] = cfg.embedding.openai_api_key
+            self.text_splitter = TokenTextSplitter(
+                chunk_size=cfg.embedding.chunk_size,
+                chunk_overlap=cfg.embedding.chunk_overlap
+            )
         self.encoder = tiktoken.get_encoding("cl100k_base")
-        self.max_retries = 10
 
 
-        logging.info(f"Using OpenAI API key: {cfg.embedding['openai_api_key']}")
+        # logging.info(f"Using OpenAI API key: {cfg.embedding['openai_api_key']}")
         # logging.info(f"Using OpenAI API base URL: {cfg.embedding['openai_base_url']}")
         # logging.info(f"Using OpenAI API version: {cfg.embedding['openai_api_version']}")
-        logging.info(f"Using deployment name: {cfg.embedding['deployment']}")
+        logging.info(f"Using vendor name: {vendor}")
+        logging.info(f"Using model name: {model}")
 
-    def embed_query(self, query):
-        for i in range(self.max_retries):
-            try:
-                response = self.embedding.embed_query(query)
-                return response
-            except Exception as e:
-                wait_time = 4 ** i
-                logging.error(f"ERROR {e} : retrying after {wait_time} seconds (exponential backoff)")
-                time.sleep(wait_time)
-        raise Exception("Request failed after {} retries".format(self.max_retries))
-
-
+    def get_token_count(self, vendor, text: str) -> int:
+        if vendor != "OPENAI":
+            tokens = self.tokenizer.encode(text)
+            # tokens = self.tokenizer.encode(text, truncation=True, max_length=self.tokenizer.model_max_length)
+        else:
+            tokens = self.encoder.encode(text)
+        return len(tokens)
+    # def get_token_count(self, text: str) -> int:
+    #     tokens = self.tokenizer.encode(text)
+    #     return len(tokens)
     ### WILL BE DEPRECATED
     def _add_source_to_text(
         self, source: str, text: str, remove_single_quote: bool = True
@@ -177,9 +157,9 @@ class Transformer:
         metadata_columns: List[str],
         json_columns: List[str],
         embedding_column: str = None,  ### only one plz
-        embedding=None,
         text_splitter=None,
         stem_columns: List[str] = None,
+        model=None
     ) -> List[Document]:
         """
         create json document from dataframe
@@ -199,8 +179,6 @@ class Transformer:
         logging.info(f"metadata columns : {metadata_columns}")
         logging.info(f"content columns : {json_columns}")
 
-        if not embedding:
-            embedding = self.embedding
 
         docs = []
         for i in range(df.shape[0]):
@@ -231,14 +209,19 @@ class Transformer:
                 _metadata["index"] = n
                 text = str({f"```{k}```": v for k, v in json_content.items()}).replace("'", "").replace("{", "").replace("}", "")
                 if not embedding_column:
-                    vector = embedding.embed_query(str(json_content))
+                    vector = self.embedding.embed_query(str(json_content))
                 else:
                     try:
-                        vector = embedding.embed_query(str(row[embedding_column].to_dict()))
+                        vector = self.embedding.embed_query(str(row[embedding_column].to_dict()))
                     except Exception:
                         logging.info(f"row doesn't have {embedding_column}")
                         continue
-                _metadata["vector"] = vector
+                vector_name = "vertor"
+                if model == "jhgan/ko-sroberta-multitask":
+                    vector_name = "vector-ko-sroberta-multitask"
+                elif model == "intfloat/multilingual-e5-large-instruct":
+                    vector_name = "vector-multilingual-e5-large-instruct"
+                _metadata[vector_name] = vector
                 doc = Document(page_content=text, metadata=_metadata)
                 docs.append(doc)
 

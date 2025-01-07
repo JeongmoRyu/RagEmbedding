@@ -5,6 +5,7 @@ from pathlib import Path
 import uuid
 from langchain.document_loaders import S3FileLoader, TextLoader, PyPDFLoader
 from omegaconf import OmegaConf
+from embedding.maum_embedding import MaumEmebedding
 from extractor import Extractor
 from transformer import Transformer
 from loader import Loader
@@ -16,6 +17,8 @@ from langchain.schema import Document
 import psycopg2
 import threading
 import queue
+
+from embedding import create_embedding
 
 
 # def read_excel_file(file_path):
@@ -78,6 +81,21 @@ def update_database(conn, cursor, table_name, column_name, value, condition, cfg
         logging.error(f"Fail update db in {table_name}: {e}")
         conn.rollback()
 
+def insert_into_database(conn, cursor, table_name, column_names, values, cfg):
+    conn, cursor = ensure_db_connection(conn, cursor, cfg)
+    try:
+        cursor.execute("SET TIMEZONE = 'Asia/Seoul'")
+        columns = ', '.join(column_names)
+        placeholders = ', '.join(['%s'] * len(column_names)) 
+        
+        query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        cursor.execute(query, values)
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Fail insert data into {table_name}: {e}")
+        conn.rollback()
+
+
 def get_org_name_from_db(cursor, file_name):
     cursor.execute("SELECT org_name FROM source_file WHERE name = %s", (file_name,))
     org_name = cursor.fetchone()
@@ -85,19 +103,10 @@ def get_org_name_from_db(cursor, file_name):
         return org_name[0]
     return None
 
-def IndividualFileLocal(chatbot_id, folder_name, files):
+def IndividualFileLocal(chatbot_id, folder_name, files, model, es_index, seq, vendor, es_url):
     logging.info(f"***************************************************************************************") 
     logging.info(f"**********************Start Embedding: {chatbot_id}_{folder_name}**********************")  
     logging.info(f"***************************************************************************************") 
-    
-    # if len(sys.argv) > 1:
-    #   folder_name = sys.argv[1]
-    #   print(f"Received folder name: {folder_name}")
-    # else:
-    #   print("No folder name provided.")
-    # ### set logger
-    # logging.basicConfig(level=logging.INFO)
-
     
     # # env = os.getenv("ENV", "local")
     # cfg_path = f"/workplace/cfg/local_cfg.yaml"
@@ -109,17 +118,12 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
     # cfg_path = current_dir.parent / 'cfg' / 'local_cfg.yaml'
 
     ### Load config file
-    # cfg = OmegaConf.load(str(r'/workplace/cfg/local_cfg.yaml'))
     config_path = os.getenv('CONFIG_PATH', '/workplace/cfg/local_cfg.yaml')
     cfg = OmegaConf.load(config_path) 
 
 
-    # cfg = OmegaConf.load(str(r'C:\\Users\\maum.ai\\Desktop\\AP\\AIBC(mcl)-mStudio\\amore-agent-rag\\cfg\\local_cfg.yaml'))
-    # logging.info(f"Type of cfg: {type(cfg)}")  # 추가: cfg의 타입 확인
-    # logging.info(f"Type of cfg.local: {type(cfg.local)}")  # 추가: cfg.local의 타입 확인
     logging.info(f"Local path: {cfg.local.path}")  # 추가: local path 확인
     logging.info(f"Local prefix: {cfg.local.prefix}")  # 추가: local prefix 확인
-    # logging.info(f"Local database: {cfg.database}")  # 추가: local database 확인
 
     results = {
         "files": {
@@ -140,7 +144,7 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
     db_cursor = db_conn.cursor()
 
     try:
-        # Extractor, Transformer, Loader 인스턴스 생성
+        # Extractor, Transformer, Loader, MaumEmbedding 인스턴스 생성
         # Extractor 인스턴스 생성 시 `cfg.local`을 전달합니다.
         if cfg.database.db_schema:
             db_cursor.execute(f'SET search_path TO "{cfg.database.db_schema}";')
@@ -151,14 +155,20 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
         #     db_cursor.execute(f'SET search_path TO "{cfg.database.db_schema}", service;')
 
         extractor = Extractor(cfg)
+        #TODO : get model from client
+        _embedding_model_name = model
+
+        embedding = create_embedding(cfg, _embedding_model_name)
         ### Load config fileC:\Users\seomi\OneDrive\바탕 화면\maumai\rag_agent\amore-agent-rag\cfg
-        transformer = Transformer(cfg)
-        loader = Loader(cfg)
+        transformer = Transformer(cfg, embedding, _embedding_model_name, vendor)
+        embeddingProxy = MaumEmebedding(cfg, embedding)
+        loader = Loader(cfg, es_url)
         local_path = os.path.join(cfg.local.path, f"{chatbot_id}_{folder_name}")
         # local_path = f"{cfg.local.path}/{chatbot_id}_{folder_name}"
         absolute_path = os.path.abspath(local_path)
         logging.info(f"Local path: {local_path}")
         logging.info(f"Absolute path: {absolute_path}")
+        logging.info(f"seq num: {seq}")
 
         # 경로 존재 여부 확인
         if os.path.exists(absolute_path):
@@ -210,7 +220,7 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
                     total_length = df.shape[0]
                     logging.info(f"Embedding {org_name if org_name else source_uuid}, total length: {total_length}")
 
-                    loader.inplace_docs(source=org_name if org_name else source_uuid, folder_name=f"{chatbot_id}_{folder_name}", inplace=True)
+                    loader.inplace_docs(source=org_name if org_name else source_uuid, folder_name=f"{chatbot_id}_{folder_name}", es_index=es_index, inplace=True)
 
                     # loader.inplace_docs(source=source, folder_name=f"{chatbot_id}_{folder_name}", inplace=True)
 
@@ -223,12 +233,13 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
                             source=org_name if org_name else source_uuid,
                             metadata_columns=metadata_column,
                             json_columns=json_column,
+                            model=model
                         )
                         for doc in docs:
                             doc.metadata["group"] = group
                             doc.metadata["source_uuid"] = source_uuid
                             doc.metadata["source"] = org_name if org_name else source_uuid
-                        loader.load_bulk(docs)
+                        loader.load_bulk(docs, es_index=es_index, model=model)
                     results["files"]["excel"].append(file_name)
                     update_database(db_conn, db_cursor, "chatbot_info_detail_embedding_status", "embedding_status", "C", f"chatbot_id = '{chatbot_id}' AND function_id = '{folder_name}' AND file_id = '{source_file_id}'", cfg)
 
@@ -267,8 +278,13 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
                     split_docs = transformer.text_splitter.split_documents([doc])
                     for split_doc in split_docs:
                         split_doc.page_content = preprocessing(split_doc.page_content)
-                        vector = transformer.embed_query(split_doc.page_content)
-                        split_doc.metadata["vector"] = vector
+                        vector = embeddingProxy.embed_query(split_doc.page_content)
+                        vector_name = "vertor"
+                        if model == "jhgan/ko-sroberta-multitask":
+                            vector_name = "vector-ko-sroberta-multitask"
+                        elif model == "intfloat/multilingual-e5-large-instruct":
+                            vector_name = "vector-multilingual-e5-large-instruct"
+                        split_doc.metadata[vector_name] = vector
                         split_doc.metadata["uuid"] = uuid.uuid4().hex
                         txt_path = str(Path(txt_file).resolve())
                         split_doc.metadata["source"] = org_name if org_name else txt_path.split(os.sep)[-1]
@@ -279,11 +295,16 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
                         else:
                             split_doc.metadata["group"] = txt_path
                         txt_docs.append(split_doc)
+                        # engine을 사용한 embedding api 호출시 db에 token 수 저장
+                        use_tokens = transformer.get_token_count(vendor, split_doc.page_content)
+                        db_column_name = ["log_id", "room_id", "seq", "model", "tokens", "token_type", "engine_type", "service_type"]
+                        db_values = [chatbot_id, folder_name, seq, model, use_tokens, "I", "EMBED", "EMBEDDING"]
+                        insert_into_database(db_conn, db_cursor, "stat_chathub_raw", db_column_name, db_values, cfg)
                 if txt_docs:
                     source = txt_docs[0].metadata["source"]
 
-                    loader.inplace_docs(source=source,folder_name=f"{chatbot_id}_{folder_name}", inplace=True)
-                    loader.load_bulk(docs=txt_docs)
+                    loader.inplace_docs(source=source,folder_name=f"{chatbot_id}_{folder_name}", es_index=es_index, inplace=True)
+                    loader.load_bulk(docs=txt_docs, es_index=es_index, model=model)
                     results["files"]["txt"].append(txt_file)
                     # update_database(db_conn, db_cursor, "function_file", "embedding_status", "C", f"chatbot_id = '{chatbot_id}' AND file_id = '{txt_source_file_id}'")
                     # update_database(db_conn, db_cursor, "chatbot_info_detail_embedding_status", "embedding_status", "C", f"chatbot_id = '{chatbot_id}' AND function_id = '{folder_name}' AND file_id = '{txt_source_file_id}'")
@@ -321,8 +342,13 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
 
                 for doc in pdf_docs:
                     doc.page_content = preprocessing(doc.page_content)
-                    vector = transformer.embed_query(doc.page_content)
-                    doc.metadata["vector"] = vector
+                    vector = embeddingProxy.embed_query(doc.page_content)
+                    vector_name = "vertor"
+                    if model == "jhgan/ko-sroberta-multitask":
+                       vector_name = "vector-ko-sroberta-multitask"
+                    elif model == "intfloat/multilingual-e5-large-instruct":
+                        vector_name = "vector-multilingual-e5-large-instruct"
+                    doc.metadata[vector_name] = vector
                     doc.metadata["uuid"] = uuid.uuid4().hex
                     pdf_path = str(Path(pdf_file).resolve())
                     doc.metadata["source"] = org_name if org_name else pdf_path.split(os.sep)[-1]
@@ -332,10 +358,16 @@ def IndividualFileLocal(chatbot_id, folder_name, files):
                         doc.metadata["group"] = pdf_path.split(os.sep)[-2]
                     else:
                         doc.metadata["group"] = pdf_path
+                    
+                    # engine을 사용한 embedding api 호출시 db에 token 수 저장
+                    use_tokens = transformer.get_token_count(vendor, doc.page_content)
+                    db_column_name = ["log_id", "room_id","seq", "model", "tokens", "token_type", "engine_type", "service_type"]
+                    db_values = [chatbot_id, folder_name, seq, model, use_tokens, "I", "EMBED", "EMBEDDING"]
+                    insert_into_database(db_conn, db_cursor, "stat_chathub_raw", db_column_name, db_values, cfg)
                 ensure_db_connection(db_conn, db_cursor, cfg)
                 source = pdf_docs[0].metadata["source"]
-                loader.inplace_docs(source=source,  folder_name=f"{chatbot_id}_{folder_name}", inplace=True)
-                loader.load_bulk(docs=pdf_docs)
+                loader.inplace_docs(source=source,  folder_name=f"{chatbot_id}_{folder_name}", es_index=es_index, inplace=True)
+                loader.load_bulk(docs=pdf_docs, es_index=es_index, model=model)
                 results["files"]["pdf"].append(pdf_file)
                 # update_database(db_conn, db_cursor, "function_file", "embedding_status", "C", f"chatbot_id = '{chatbot_id}' AND file_id = '{pdf_source_file_id}'")
                 # update_database(db_conn, db_cursor, "chatbot_info_detail_embedding_status", "embedding_status", "C", f"chatbot_id = '{chatbot_id}' AND function_id = '{folder_name}' AND file_id = '{pdf_source_file_id}'")

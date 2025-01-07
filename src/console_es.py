@@ -19,13 +19,21 @@ from collections import defaultdict
 small_file_queue = queue.Queue()
 large_file_queue = queue.Queue()
 
-
 app = Flask(__name__)
 
 # 설정 파일 로드
 # cfg = OmegaConf.load(str(r'/workplace/cfg/local_cfg.yaml'))
-config_path = os.getenv('CONFIG_PATH', '/workplace/cfg/local_cfg.yaml')
-cfg = OmegaConf.load(config_path) 
+config_path = os.getenv('CONFIG_PATH', 'cfg/local_cfg.yaml')
+print(f"config_path: {config_path}")
+cfg = OmegaConf.load(config_path)
+
+# 환경 변수에서 OpenAI API Key를 가져옴 (없으면 기존 설정 값 사용)
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if openai_api_key:
+    cfg.embedding.openai_api_key = openai_api_key
+
+# 결과 출력 (디버깅용)
+print("OpenAI API Key:", cfg.embedding.openai_api_key)
 
 # Elasticsearch 설정 가져오기
 es_url = cfg.es.url
@@ -341,7 +349,11 @@ def process_small_files_in_batch():
             chatbot_id = item['chatbot_id']
             folder_name = item['folder_name']
             file_path = item['file']
-
+            embedding_model = item['model']
+            es_index = item['index']
+            seq = item['seq']
+            vendor = item['vendor']
+            es_url = item['es_url']
             if file_path.endswith('.pdf'):
                 grouped_files[(chatbot_id, folder_name)]["pdf"].append(file_path)
             elif file_path.endswith('.xls'):
@@ -359,7 +371,7 @@ def process_small_files_in_batch():
             if total_num > 0:
                 try:
                     logging.info(f"Processing small batch of {total_num} files for chatbot_id: {chatbot_id}, folder_name: {folder_name}")
-                    IndividualFileLocal(chatbot_id, folder_name, files)
+                    IndividualFileLocal(chatbot_id, folder_name, files, embedding_model, es_index, seq, vendor, es_url)
                     logging.info(f"Successfully processed small batch of {total_num} files.")
                 except Exception as e:
                     logging.error(f"Error processing small files for chatbot_id: {chatbot_id}, folder_name: {folder_name}, error: {str(e)}")
@@ -380,7 +392,11 @@ def process_large_files_in_batch():
             chatbot_id = item['chatbot_id']
             folder_name = item['folder_name']
             file_path = item['file']
-
+            embedding_model = item['model']
+            es_index = item['index']
+            seq = item['seq']
+            vendor = item['vendor']
+            es_url = item['es_url']
             if file_path.endswith('.pdf'):
                 grouped_files[(chatbot_id, folder_name)]["pdf"].append(file_path)
             elif file_path.endswith('.xls'):
@@ -398,7 +414,7 @@ def process_large_files_in_batch():
             if total_num > 0:
                 try:
                     logging.info(f"Processing large batch of {total_num} files for chatbot_id: {chatbot_id}, folder_name: {folder_name}")
-                    IndividualFileLocal(chatbot_id, folder_name, files)
+                    IndividualFileLocal(chatbot_id, folder_name, files, embedding_model, es_index, seq, vendor, es_url)
                     logging.info(f"Successfully processed large batch of {total_num} files.")
                 except Exception as e:
                     logging.error(f"Error processing large files for chatbot_id: {chatbot_id}, folder_name: {folder_name}, error: {str(e)}")
@@ -420,14 +436,44 @@ def generate_embedding_api():
     data = request.json
     folder_name = data.get('folder_name')
     chatbot_id = data.get('chatbot_id')
+    model = data.get('model')
+    es_index = data.get('index')
+    es_url = data.get('url')
+    vendor = data.get('vendor')
+    seq = data.get('seq')
+
+    logging.info(f"Use Embedding url and vendor : {es_url}, {vendor}")
+    # model_type = data.get('model_type')
     if not folder_name or not folder_name.strip():
         return jsonify({"error": "No valid folder_name provided"}), 400
     if not chatbot_id or not chatbot_id.strip():
         return jsonify({"error": "No valid chatbot_id provided"}), 400
+    if not model or not model.strip():
+        model = cfg.embedding.deployment
+    if not es_index or not es_index.strip():
+        es_index = cfg.es.index_name
+    if not es_url or not es_url.strip():
+        es_url = cfg.es.url
+    if not vendor or not vendor.strip():
+        vendor = cfg.embedding.vendor
+    if not seq:
+        seq = cfg.embedding.seq
+    # if not model_type or not model_type.strip():
+        # model_type = cfg.embeddingserver.model_type
+    logging.info(f"Use Embedding model and type : {model}, {vendor}, {seq}")
+    # logging.info(f"Use Embedding model and type : {model}, {model_type}")
+
     extractor = Extractor(cfg)
-    loader = Loader(cfg)
+
+    loader = Loader(cfg, es_url)
     function_name = f"{chatbot_id}_{folder_name}"
-    loader.delete_data_in_group(function_name)
+    # loader.delete_data_in_group(function_name)
+    try:
+        loader.delete_data_in_group(function_name, es_index)
+        logging.info(f"Deletion process completed for function name: {function_name}")
+    except Exception as e:
+        logging.warning(f"Proceeding despite deletion failure for {function_name}. Error: {e}")
+
 
     # 파일 리스트 가져오기
     files = extractor.get_file_list_from_local(
@@ -443,14 +489,31 @@ def generate_embedding_api():
             file_size = os.path.getsize(file)
             logging.info(f"파일 크기는 {file_size}.")
             if file_size > 10 * 1024 * 1024: 
-                large_file_queue.put({"chatbot_id": chatbot_id, "folder_name": folder_name, "file": file})
+                large_file_queue.put({"chatbot_id": chatbot_id, "folder_name": folder_name, "file": file, "model": model, "index": es_index, "url": es_url, "seq": seq, "vendor":vendor, "es_url": es_url})
             else:
-                small_file_queue.put({"chatbot_id": chatbot_id, "folder_name": folder_name, "file": file})
+                small_file_queue.put({"chatbot_id": chatbot_id, "folder_name": folder_name, "file": file, "model": model, "index": es_index, "url": es_url, "seq": seq, "vendor":vendor, "es_url": es_url})
+                # small_file_queue.put({"chatbot_id": chatbot_id, "folder_name": folder_name, "file": file, "model": model, "model_type": model_type})
     
             # embedding_queue.put({"chatbot_id": chatbot_id, "folder_name": folder_name, "file": file})
     
     return jsonify({"status": "added to queue"}), 200
 
+# 9. index 명칭들 get 방법
+@app.route('/get_indices', methods=['GET'])
+def get_all_indices():
+    url = f"{es_url}/_cat/indices?format=json"
+    
+    try:
+        response = requests.get(url, auth=auth)
+        response.raise_for_status() 
+        indices = response.json()
+        
+        index_names = [index['index'] for index in indices]
+        
+        return jsonify({"indices": index_names})
+    
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Failed to fetch indices: {str(e)}"}), 500
 
 
 
