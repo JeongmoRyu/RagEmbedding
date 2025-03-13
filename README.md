@@ -5,6 +5,7 @@ dev history
 - AWS s3 embedding
 - local storage embedding
 - flask server (api)
+- docker
 - openai embedding
 - queue
 - embedding proxy embedding
