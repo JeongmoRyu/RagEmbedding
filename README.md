@@ -1,3 +1,12 @@
-# mcl-rag-agent
+# Rag Embedding at ElasticSearch
 
-rag-agent
+dev history
+- file embedding
+- AWS s3 embedding
+- local storage embedding
+- flask server (api)
+- openai embedding
+- queue
+- embedding proxy embedding
+- local server embedding model
+- es index type
